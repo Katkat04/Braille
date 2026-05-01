@@ -1,25 +1,16 @@
-import mediapipe as mp
-import cv2, math
-from tkinter import *
-from PIL import Image, ImageTk
+import streamlit as st
+import cv2
+import math
+import numpy as np
+from mediapipe.python.solutions import drawing_utils as mp_drawing
+from mediapipe.python.solutions import hands as mp_hands
 
-win = Tk()
-width = win.winfo_screenwidth()
-height = win.winfo_screenheight()
-win.geometry("%dx%d" % (width, height))
-win.title('Traductor Lenguaje de Señas')
-win.configure(bg='#000000')
-
-mp_drawing = mp.solutions.drawing_utils
-mp_hands = mp.solutions.hands
+st.set_page_config(page_title="Traductor LSC", layout="wide")
+st.title("Traductor Lengua de Señas Colombiana")
 
 class TraductorLenguajeSeñas:
     def __init__(self):
-        self.hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1,
-                                     min_detection_confidence=0.7, min_tracking_confidence=0.5)
         self.current_gesture = None
-        self.CountGesture = StringVar()
-        # Historial de posiciones para detectar movimiento (J, Z, Ñ)
         self.landmark_history = []
 
     def detect_gesture(self, image):
@@ -32,668 +23,325 @@ class TraductorLenguajeSeñas:
                     'pinky': (lm.landmark[20].x, lm.landmark[20].y),
                     'index': (lm.landmark[8].x, lm.landmark[8].y),
                     'middle': (lm.landmark[12].x, lm.landmark[12].y),
+                    'wrist': (lm.landmark[0].x, lm.landmark[0].y),
                 })
-                if len(self.landmark_history) > 20:
+                if len(self.landmark_history) > 25:
                     self.landmark_history.pop(0)
                 self.current_gesture = self.get_gesture(lm)
+                mp_drawing.draw_landmarks(image, lm, mp_hands.HAND_CONNECTIONS)
             else:
                 self.landmark_history.clear()
+                self.current_gesture = None
+        return image
 
-    def get_gesture(self, hand_landmarks):
+    def get_gesture(self, lm):
+        thumb_tip  = lm.landmark[4]
+        thumb_ip   = lm.landmark[3]
+        thumb_mcp  = lm.landmark[2]
+
+        idx_tip = lm.landmark[8]; idx_dip = lm.landmark[7]
+        idx_pip = lm.landmark[6]; idx_mcp = lm.landmark[5]
+
+        mid_tip = lm.landmark[12]; mid_dip = lm.landmark[11]
+        mid_pip = lm.landmark[10]; mid_mcp = lm.landmark[9]
+
+        rng_tip = lm.landmark[16]
+        rng_pip = lm.landmark[14]; rng_mcp = lm.landmark[13]
+
+        pnk_tip = lm.landmark[20]; pnk_dip = lm.landmark[19]
+        pnk_pip = lm.landmark[18]; pnk_mcp = lm.landmark[17]
+
+        wrist = lm.landmark[0]
+
+        def dist(a, b):
+            return math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2)
+
+        idx_up  = idx_tip.y < idx_pip.y - 0.03
+        mid_up  = mid_tip.y < mid_pip.y - 0.03
+        rng_up  = rng_tip.y < rng_pip.y - 0.03
+        pnk_up  = pnk_tip.y < pnk_pip.y - 0.03
+
+        idx_dn  = idx_tip.y > idx_pip.y + 0.01
+        mid_dn  = mid_tip.y > mid_pip.y + 0.01
+        rng_dn  = rng_tip.y > rng_pip.y + 0.01
+        pnk_dn  = pnk_tip.y > pnk_pip.y + 0.01
+
+        thumb_out = abs(thumb_tip.x - thumb_mcp.x) > 0.07
+
+        # A: puño cerrado, pulgar al lado (no encima)
         def letraA():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            thumb_tip = hand_landmarks.landmark[4]
-            thumb_mcp = hand_landmarks.landmark[2]
-            dedos_hacia_abajo = (
-                index_tip.y > index_pip.y and middle_tip.y > middle_pip.y and
-                ring_tip.y > ring_pip.y and pinky_tip.y > pinky_pip.y
-            )
-            pulgar_estirado_lateral = abs(thumb_tip.x - thumb_mcp.x) > 0.06
-            return dedos_hacia_abajo and pulgar_estirado_lateral
+            punio = idx_dn and mid_dn and rng_dn and pnk_dn
+            pulgar_lateral = abs(thumb_tip.x - thumb_mcp.x) > 0.05 and thumb_tip.y > wrist.y
+            pulgar_no_encima = thumb_tip.y > idx_mcp.y
+            return punio and pulgar_lateral and pulgar_no_encima
 
+        # B: 4 dedos juntos arriba, pulgar doblado dentro
         def letraB():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            thumb_tip = hand_landmarks.landmark[4]
-            index_mcp = hand_landmarks.landmark[5]
-            cuatro_dedos_up = (
-                index_tip.y < index_pip.y + 0.05 and
-                middle_tip.y < middle_pip.y + 0.05 and
-                ring_tip.y < ring_pip.y + 0.05 and
-                pinky_tip.y < pinky_pip.y + 0.05
-            )
-            dedos_juntos = (
-                abs(index_tip.x - middle_tip.x) < 0.08 and
-                abs(middle_tip.x - ring_tip.x) < 0.08 and
-                abs(ring_tip.x - pinky_tip.x) < 0.08
-            )
-            pulgar_doblado = thumb_tip.y > index_mcp.y - 0.05
-            return cuatro_dedos_up and dedos_juntos and pulgar_doblado
+            cuatro_up = idx_up and mid_up and rng_up and pnk_up
+            juntos = (abs(idx_tip.x - mid_tip.x) < 0.06 and
+                      abs(mid_tip.x - rng_tip.x) < 0.06 and
+                      abs(rng_tip.x - pnk_tip.x) < 0.06)
+            pulgar_dentro = not thumb_out
+            return cuatro_up and juntos and pulgar_dentro
 
+        # C: mano curvada en C
         def letraC():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            thumb_tip = hand_landmarks.landmark[4]
-            thumb_ip = hand_landmarks.landmark[3]
-            thumb_mcp = hand_landmarks.landmark[2]
-            dedos_curvados = (
-                index_pip.y - 0.05 < index_tip.y < index_pip.y + 0.1 and
-                middle_pip.y - 0.05 < middle_tip.y < middle_pip.y + 0.1 and
-                ring_pip.y - 0.05 < ring_tip.y < ring_pip.y + 0.1 and
-                pinky_pip.y - 0.05 < pinky_tip.y < pinky_pip.y + 0.1
-            )
-            dedos_juntos = (
-                abs(index_tip.x - middle_tip.x) < 0.08 and
-                abs(middle_tip.x - ring_tip.x) < 0.08 and
-                abs(ring_tip.x - pinky_tip.x) < 0.08
-            )
-            pulgar_curvado = (thumb_tip.y > thumb_ip.y - 0.05) and (thumb_ip.y > thumb_mcp.y - 0.05)
-            return dedos_curvados and dedos_juntos and pulgar_curvado
+            semi = lambda tip, pip: abs(tip.y - pip.y) < 0.07
+            todos_semi = semi(idx_tip, idx_pip) and semi(mid_tip, mid_pip) and semi(rng_tip, rng_pip) and semi(pnk_tip, pnk_pip)
+            juntos = abs(idx_tip.x - mid_tip.x) < 0.07 and abs(mid_tip.x - rng_tip.x) < 0.07
+            pulgar_separado = dist(thumb_tip, idx_tip) > 0.1
+            return todos_semi and juntos and pulgar_separado
 
+        # D: índice arriba, otros tocan pulgar
         def letraD():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            thumb_tip = hand_landmarks.landmark[4]
-            index_up = index_tip.y < index_pip.y - 0.04
-            middle_down = middle_tip.y > middle_pip.y
-            ring_down = ring_tip.y > ring_pip.y
-            pinky_down = pinky_tip.y > pinky_pip.y
-            thumb_near_middle = math.sqrt((thumb_tip.x - middle_tip.x)**2 + (thumb_tip.y - middle_tip.y)**2) < 0.12
-            return index_up and middle_down and ring_down and pinky_down and thumb_near_middle
+            return idx_up and mid_dn and rng_dn and pnk_dn and dist(thumb_tip, mid_tip) < 0.1
 
+        # E: todos los dedos doblados en gancho
         def letraE():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            index_mcp = hand_landmarks.landmark[5]
-            middle_mcp = hand_landmarks.landmark[9]
-            all_hooked = (
-                index_tip.y > index_pip.y - 0.02 and
-                middle_tip.y > middle_pip.y - 0.02 and
-                ring_tip.y > ring_pip.y - 0.02 and
-                pinky_tip.y > pinky_pip.y - 0.02
-            )
-            tips_at_mcp = (
-                abs(index_tip.y - index_mcp.y) < 0.1 and
-                abs(middle_tip.y - middle_mcp.y) < 0.1
-            )
-            return all_hooked and tips_at_mcp
+            gancho = idx_dn and mid_dn and rng_dn and pnk_dn
+            tips_bajos = (abs(idx_tip.y - idx_mcp.y) < 0.12 and abs(mid_tip.y - mid_mcp.y) < 0.12)
+            pulgar_plano = not thumb_out
+            return gancho and tips_bajos and pulgar_plano
 
+        # F: índice+pulgar hacen círculo, otros 3 arriba
         def letraF():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            thumb_tip = hand_landmarks.landmark[4]
-            index_down = index_tip.y > index_pip.y
-            middle_up = middle_tip.y < middle_pip.y - 0.03
-            ring_up = ring_tip.y < ring_pip.y - 0.03
-            pinky_up = pinky_tip.y < pinky_pip.y - 0.03
-            thumb_near_index = math.sqrt((thumb_tip.x - index_tip.x)**2 + (thumb_tip.y - index_tip.y)**2) < 0.1
-            return index_down and middle_up and ring_up and pinky_up and thumb_near_index
+            circulo = dist(thumb_tip, idx_tip) < 0.07
+            tres_up = mid_up and rng_up and pnk_up
+            return circulo and tres_up and idx_dn
 
+        # G: índice apunta horizontal
         def letraG():
-            # Índice Y pulgar apuntando al costado (como pistola horizontal)
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_mcp = hand_landmarks.landmark[5]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            thumb_tip = hand_landmarks.landmark[4]
-            thumb_ip = hand_landmarks.landmark[3]
-            index_horizontal = abs(index_tip.x - index_mcp.x) > abs(index_tip.y - index_mcp.y) * 1.5
-            middle_down = middle_tip.y > middle_pip.y
-            ring_down = ring_tip.y > ring_pip.y
-            pinky_down = pinky_tip.y > pinky_pip.y
-            # El pulgar también se extiende (no está doblado)
-            thumb_extended = abs(thumb_tip.x - thumb_ip.x) > 0.02
-            return index_horizontal and middle_down and ring_down and pinky_down and thumb_extended
+            idx_horiz = abs(idx_tip.x - idx_mcp.x) > abs(idx_tip.y - idx_mcp.y) * 1.2
+            return idx_horiz and mid_dn and rng_dn and pnk_dn
 
+        # H: índice y medio horizontales juntos
         def letraH():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_mcp = hand_landmarks.landmark[5]
-            middle_mcp = hand_landmarks.landmark[9]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            index_horizontal = abs(index_tip.x - index_mcp.x) > abs(index_tip.y - index_mcp.y)
-            middle_horizontal = abs(middle_tip.x - middle_mcp.x) > abs(middle_tip.y - middle_mcp.y)
-            ring_down = ring_tip.y > ring_pip.y
-            pinky_down = pinky_tip.y > pinky_pip.y
-            fingers_aligned = abs(index_tip.y - middle_tip.y) < 0.06
-            return index_horizontal and middle_horizontal and ring_down and pinky_down and fingers_aligned
+            idx_horiz = abs(idx_tip.x - idx_mcp.x) > abs(idx_tip.y - idx_mcp.y)
+            mid_horiz = abs(mid_tip.x - mid_mcp.x) > abs(mid_tip.y - mid_mcp.y)
+            juntos = abs(idx_tip.y - mid_tip.y) < 0.05
+            return idx_horiz and mid_horiz and juntos and rng_dn and pnk_dn
 
+        # I: solo meñique arriba
         def letraI():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            pinky_up = pinky_tip.y < pinky_pip.y - 0.04
-            index_down = index_tip.y > index_pip.y
-            middle_down = middle_tip.y > middle_pip.y
-            ring_down = ring_tip.y > ring_pip.y
-            return pinky_up and index_down and middle_down and ring_down
+            return pnk_up and idx_dn and mid_dn and rng_dn and not thumb_out
 
+        # J: meñique arriba + traza J
         def letraJ():
-            # Posición I (meñique arriba) + movimiento en J con el meñique
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            pinky_up = pinky_tip.y < pinky_pip.y - 0.04
-            index_down = index_tip.y > index_pip.y
-            middle_down = middle_tip.y > middle_pip.y
-            ring_down = ring_tip.y > ring_pip.y
-            static_I = pinky_up and index_down and middle_down and ring_down
-            if not static_I or len(self.landmark_history) < 10:
+            static_i = pnk_up and idx_dn and mid_dn and rng_dn
+            if not static_i or len(self.landmark_history) < 10:
                 return False
-            # El meñique traza una J: movimiento vertical + componente horizontal al final
-            pinky_ys = [h['pinky'][1] for h in self.landmark_history[-15:]]
-            pinky_xs = [h['pinky'][0] for h in self.landmark_history[-15:]]
-            y_range = max(pinky_ys) - min(pinky_ys)
-            x_range = max(pinky_xs) - min(pinky_xs)
-            return y_range > 0.08 and x_range > 0.05
+            pys = [h['pinky'][1] for h in self.landmark_history[-15:]]
+            pxs = [h['pinky'][0] for h in self.landmark_history[-15:]]
+            return (max(pys) - min(pys)) > 0.08 and (max(pxs) - min(pxs)) > 0.05
 
+        # K: índice y medio en V, pulgar entre ellos
         def letraK():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            index_mcp = hand_landmarks.landmark[5]
-            middle_mcp = hand_landmarks.landmark[9]
-            thumb_tip = hand_landmarks.landmark[4]
-            index_up = index_tip.y < index_pip.y - 0.04
-            middle_up = middle_tip.y < middle_pip.y - 0.04
-            ring_down = ring_tip.y > ring_pip.y
-            pinky_down = pinky_tip.y > pinky_pip.y
-            fingers_spread = abs(index_tip.x - middle_tip.x) > 0.05
-            thumb_between = (min(index_mcp.x, middle_mcp.x) - 0.05 < thumb_tip.x < max(index_mcp.x, middle_mcp.x) + 0.05)
-            return index_up and middle_up and ring_down and pinky_down and fingers_spread and thumb_between
+            dos_up = idx_up and mid_up
+            otros_dn = rng_dn and pnk_dn
+            separados = abs(idx_tip.x - mid_tip.x) > 0.04
+            pulgar_entre = (min(idx_mcp.x, mid_mcp.x) - 0.04 < thumb_tip.x < max(idx_mcp.x, mid_mcp.x) + 0.04)
+            return dos_up and otros_dn and separados and pulgar_entre
 
+        # L: índice arriba + pulgar extendido
         def letraL():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            thumb_tip = hand_landmarks.landmark[4]
-            thumb_mcp = hand_landmarks.landmark[2]
-            index_up = index_tip.y < index_pip.y - 0.04
-            middle_down = middle_tip.y > middle_pip.y
-            ring_down = ring_tip.y > ring_pip.y
-            pinky_down = pinky_tip.y > pinky_pip.y
-            thumb_extended = abs(thumb_tip.x - thumb_mcp.x) > 0.07
-            return index_up and middle_down and ring_down and pinky_down and thumb_extended
+            return idx_up and mid_dn and rng_dn and pnk_dn and thumb_out
 
+        # M: puño, 3 dedos sobre pulgar, meñique separado
         def letraM():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            thumb_tip = hand_landmarks.landmark[4]
-            index_mcp = hand_landmarks.landmark[5]
-            all_down = (
-                index_tip.y > index_pip.y and middle_tip.y > middle_pip.y and
-                ring_tip.y > ring_pip.y and pinky_tip.y > pinky_pip.y
-            )
-            three_together = (
-                abs(index_tip.x - middle_tip.x) < 0.07 and
-                abs(middle_tip.x - ring_tip.x) < 0.07
-            )
-            pinky_separate = abs(pinky_tip.x - ring_tip.x) > 0.04
-            thumb_tucked = thumb_tip.y > index_mcp.y - 0.05
-            return all_down and three_together and pinky_separate and thumb_tucked
+            todos_dn = idx_dn and mid_dn and rng_dn and pnk_dn
+            tres_juntos = abs(idx_tip.x - mid_tip.x) < 0.06 and abs(mid_tip.x - rng_tip.x) < 0.06
+            pnk_sep = abs(pnk_tip.x - rng_tip.x) > 0.03
+            pulgar_dentro = thumb_tip.y > idx_mcp.y - 0.03
+            return todos_dn and tres_juntos and pnk_sep and pulgar_dentro
 
+        # N: puño, 2 dedos sobre pulgar
         def letraN():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            thumb_tip = hand_landmarks.landmark[4]
-            index_mcp = hand_landmarks.landmark[5]
-            all_down = (
-                index_tip.y > index_pip.y and middle_tip.y > middle_pip.y and
-                ring_tip.y > ring_pip.y and pinky_tip.y > pinky_pip.y
-            )
-            two_together = abs(index_tip.x - middle_tip.x) < 0.07
-            ring_separate = abs(ring_tip.x - middle_tip.x) > 0.07
-            thumb_tucked = thumb_tip.y > index_mcp.y - 0.05
-            return all_down and two_together and ring_separate and thumb_tucked
+            todos_dn = idx_dn and mid_dn and rng_dn and pnk_dn
+            dos_juntos = abs(idx_tip.x - mid_tip.x) < 0.06
+            rng_sep = abs(rng_tip.x - mid_tip.x) > 0.05
+            pulgar_dentro = thumb_tip.y > idx_mcp.y - 0.03
+            return todos_dn and dos_juntos and rng_sep and pulgar_dentro
 
+        # Ñ: N + movimiento ondulante
         def letraN_tilde():
-            # Posición N + movimiento lateral (ondulación)
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            thumb_tip = hand_landmarks.landmark[4]
-            index_mcp = hand_landmarks.landmark[5]
-            all_down = (
-                index_tip.y > index_pip.y and middle_tip.y > middle_pip.y and
-                ring_tip.y > ring_pip.y and pinky_tip.y > pinky_pip.y
-            )
-            two_together = abs(index_tip.x - middle_tip.x) < 0.07
-            ring_separate = abs(ring_tip.x - middle_tip.x) > 0.07
-            thumb_tucked = thumb_tip.y > index_mcp.y - 0.05
-            static_N = all_down and two_together and ring_separate and thumb_tucked
-            if not static_N or len(self.landmark_history) < 10:
+            if not letraN() or len(self.landmark_history) < 10:
                 return False
-            # Detectar ondulación: el índice oscila horizontalmente
-            index_xs = [h['index'][0] for h in self.landmark_history[-15:]]
-            x_range = max(index_xs) - min(index_xs)
-            return x_range > 0.07
+            ixs = [h['index'][0] for h in self.landmark_history[-15:]]
+            return (max(ixs) - min(ixs)) > 0.07
 
+        # O: todos forman O con pulgar
         def letraO():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            thumb_tip = hand_landmarks.landmark[4]
-            all_curved = (
-                abs(index_tip.y - index_pip.y) < 0.06 and
-                abs(middle_tip.y - middle_pip.y) < 0.06 and
-                abs(ring_tip.y - ring_pip.y) < 0.06 and
-                abs(pinky_tip.y - pinky_pip.y) < 0.06
-            )
-            thumb_close = math.sqrt((thumb_tip.x - index_tip.x)**2 + (thumb_tip.y - index_tip.y)**2) < 0.1
-            return all_curved and thumb_close
+            semi = lambda tip, pip: abs(tip.y - pip.y) < 0.07
+            todos_semi = semi(idx_tip, idx_pip) and semi(mid_tip, mid_pip) and semi(rng_tip, rng_pip)
+            return todos_semi and dist(thumb_tip, idx_tip) < 0.08
 
+        # P: índice y medio apuntan abajo
         def letraP():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            index_mcp = hand_landmarks.landmark[5]
-            middle_mcp = hand_landmarks.landmark[9]
-            thumb_tip = hand_landmarks.landmark[4]
-            thumb_ip = hand_landmarks.landmark[3]
-            index_points_down = index_tip.y > index_mcp.y + 0.05
-            middle_points_down = middle_tip.y > middle_mcp.y
-            ring_down = ring_tip.y > ring_pip.y
-            pinky_down = pinky_tip.y > pinky_pip.y
-            thumb_out = abs(thumb_tip.x - thumb_ip.x) > 0.04
-            return index_points_down and middle_points_down and ring_down and pinky_down and thumb_out
+            idx_abajo = idx_tip.y > idx_mcp.y + 0.04
+            mid_abajo = mid_tip.y > mid_mcp.y
+            return idx_abajo and mid_abajo and rng_dn and pnk_dn and abs(thumb_tip.x - thumb_ip.x) > 0.03
 
+        # Q: índice apunta abajo, pulgar también
         def letraQ():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            index_mcp = hand_landmarks.landmark[5]
-            thumb_tip = hand_landmarks.landmark[4]
-            thumb_mcp = hand_landmarks.landmark[2]
-            index_points_down = index_tip.y > index_mcp.y + 0.05
-            middle_down = middle_tip.y > middle_pip.y
-            ring_down = ring_tip.y > ring_pip.y
-            pinky_down = pinky_tip.y > pinky_pip.y
-            thumb_down = thumb_tip.y > thumb_mcp.y
-            return index_points_down and middle_down and ring_down and pinky_down and thumb_down
+            idx_abajo = idx_tip.y > idx_mcp.y + 0.04
+            pulgar_abajo = thumb_tip.y > thumb_mcp.y
+            return idx_abajo and pulgar_abajo and mid_dn and rng_dn and pnk_dn
 
+        # R: índice y medio cruzados arriba
         def letraR():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            index_up = index_tip.y < index_pip.y - 0.03
-            middle_up = middle_tip.y < middle_pip.y - 0.03
-            ring_down = ring_tip.y > ring_pip.y
-            pinky_down = pinky_tip.y > pinky_pip.y
-            fingers_crossed = abs(index_tip.x - middle_tip.x) < 0.04
-            return index_up and middle_up and ring_down and pinky_down and fingers_crossed
+            dos_up = idx_up and mid_up
+            cruzados = abs(idx_tip.x - mid_tip.x) < 0.035
+            return dos_up and rng_dn and pnk_dn and cruzados
 
+        # S: puño, pulgar encima de los dedos
         def letraS():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            thumb_tip = hand_landmarks.landmark[4]
-            index_mcp = hand_landmarks.landmark[5]
-            all_down = (
-                index_tip.y > index_pip.y and middle_tip.y > middle_pip.y and
-                ring_tip.y > ring_pip.y and pinky_tip.y > pinky_pip.y
-            )
-            thumb_over = abs(thumb_tip.x - index_mcp.x) < 0.12
-            return all_down and thumb_over
+            todos_dn = idx_dn and mid_dn and rng_dn and pnk_dn
+            pulgar_encima = thumb_tip.y < idx_mcp.y and abs(thumb_tip.x - idx_mcp.x) < 0.12
+            return todos_dn and pulgar_encima
 
+        # T: puño, pulgar entre índice y medio
         def letraT():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            thumb_tip = hand_landmarks.landmark[4]
-            index_mcp = hand_landmarks.landmark[5]
-            all_down = (
-                index_tip.y > index_pip.y and middle_tip.y > middle_pip.y and
-                ring_tip.y > ring_pip.y and pinky_tip.y > pinky_pip.y
-            )
-            thumb_sticks_up = thumb_tip.y < index_mcp.y
-            return all_down and thumb_sticks_up
+            todos_dn = idx_dn and mid_dn and rng_dn and pnk_dn
+            pulgar_arriba = thumb_tip.y < idx_mcp.y
+            pulgar_entre = (min(idx_mcp.x, mid_mcp.x) - 0.04 < thumb_tip.x < max(idx_mcp.x, mid_mcp.x) + 0.04)
+            return todos_dn and pulgar_arriba and pulgar_entre
 
+        # U: índice y medio juntos arriba
         def letraU():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            index_up = index_tip.y < index_pip.y - 0.04
-            middle_up = middle_tip.y < middle_pip.y - 0.04
-            ring_down = ring_tip.y > ring_pip.y
-            pinky_down = pinky_tip.y > pinky_pip.y
-            fingers_together = abs(index_tip.x - middle_tip.x) < 0.05
-            return index_up and middle_up and ring_down and pinky_down and fingers_together
+            dos_up = idx_up and mid_up
+            juntos = abs(idx_tip.x - mid_tip.x) < 0.04
+            return dos_up and rng_dn and pnk_dn and juntos
 
+        # V: índice y medio separados arriba
         def letraV():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            index_up = index_tip.y < index_pip.y - 0.04
-            middle_up = middle_tip.y < middle_pip.y - 0.04
-            ring_down = ring_tip.y > ring_pip.y
-            pinky_down = pinky_tip.y > pinky_pip.y
-            fingers_spread = abs(index_tip.x - middle_tip.x) > 0.05
-            return index_up and middle_up and ring_down and pinky_down and fingers_spread
+            dos_up = idx_up and mid_up
+            separados = abs(idx_tip.x - mid_tip.x) > 0.05
+            return dos_up and rng_dn and pnk_dn and separados
 
+        # W: índice, medio y anular arriba separados
         def letraW():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            index_up = index_tip.y < index_pip.y - 0.03
-            middle_up = middle_tip.y < middle_pip.y - 0.03
-            ring_up = ring_tip.y < ring_pip.y - 0.03
-            pinky_down = pinky_tip.y > pinky_pip.y
-            fingers_spread = abs(index_tip.x - ring_tip.x) > 0.08
-            return index_up and middle_up and ring_up and pinky_down and fingers_spread
+            tres_up = idx_up and mid_up and rng_up
+            separados = abs(idx_tip.x - rng_tip.x) > 0.07
+            return tres_up and pnk_dn and separados
 
+        # X: índice en gancho
         def letraX():
-            index_tip = hand_landmarks.landmark[8]
-            index_dip = hand_landmarks.landmark[7]
-            index_pip = hand_landmarks.landmark[6]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            index_hooked = (index_dip.y < index_pip.y) and (index_tip.y > index_dip.y + 0.02)
-            middle_down = middle_tip.y > middle_pip.y
-            ring_down = ring_tip.y > ring_pip.y
-            pinky_down = pinky_tip.y > pinky_pip.y
-            return index_hooked and middle_down and ring_down and pinky_down
+            gancho = (idx_dip.y < idx_pip.y) and (idx_tip.y > idx_dip.y + 0.02)
+            return gancho and mid_dn and rng_dn and pnk_dn
 
+        # Y: meñique y pulgar extendidos
         def letraY():
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            thumb_tip = hand_landmarks.landmark[4]
-            thumb_mcp = hand_landmarks.landmark[2]
-            index_down = index_tip.y > index_pip.y
-            middle_down = middle_tip.y > middle_pip.y
-            ring_down = ring_tip.y > ring_pip.y
-            pinky_up = pinky_tip.y < pinky_pip.y - 0.03
-            thumb_extended = abs(thumb_tip.x - thumb_mcp.x) > 0.07
-            return index_down and middle_down and ring_down and pinky_up and thumb_extended
+            return pnk_up and idx_dn and mid_dn and rng_dn and thumb_out
 
+        # Z: índice arriba + movimiento horizontal
         def letraZ():
-            # Posición: índice arriba, otros abajo, pulgar pegado
-            # + movimiento horizontal amplio (traza una Z)
-            index_tip = hand_landmarks.landmark[8]
-            middle_tip = hand_landmarks.landmark[12]
-            ring_tip = hand_landmarks.landmark[16]
-            pinky_tip = hand_landmarks.landmark[20]
-            index_pip = hand_landmarks.landmark[6]
-            index_mcp = hand_landmarks.landmark[5]
-            middle_pip = hand_landmarks.landmark[10]
-            ring_pip = hand_landmarks.landmark[14]
-            pinky_pip = hand_landmarks.landmark[18]
-            thumb_tip = hand_landmarks.landmark[4]
-            thumb_mcp = hand_landmarks.landmark[2]
-            index_up = index_tip.y < index_pip.y - 0.04
-            middle_down = middle_tip.y > middle_pip.y
-            ring_down = ring_tip.y > ring_pip.y
-            pinky_down = pinky_tip.y > pinky_pip.y
-            thumb_close = abs(thumb_tip.x - thumb_mcp.x) < 0.07
-            static_pos = index_up and middle_down and ring_down and pinky_down and thumb_close
-            if not static_pos or len(self.landmark_history) < 10:
+            static = idx_up and mid_dn and rng_dn and pnk_dn and not thumb_out
+            if not static or len(self.landmark_history) < 10:
                 return False
-            # El índice se mueve horizontalmente de forma amplia (traza la Z)
-            index_xs = [h['index'][0] for h in self.landmark_history[-15:]]
-            x_range = max(index_xs) - min(index_xs)
-            return x_range > 0.1
+            ixs = [h['index'][0] for h in self.landmark_history[-15:]]
+            return (max(ixs) - min(ixs)) > 0.10
 
-        # Detección en orden (más específicas primero)
-        if letraA():
-            self.CountGesture.set("Letra A")
-            return "A"
-        if letraB():
-            self.CountGesture.set("Letra B")
-            return "B"
-        if letraC():
-            self.CountGesture.set("Letra C")
-            return "C"
-        if letraD():
-            self.CountGesture.set("Letra D")
-            return "D"
-        if letraE():
-            self.CountGesture.set("Letra E")
-            return "E"
-        if letraF():
-            self.CountGesture.set("Letra F")
-            return "F"
-        if letraG():
-            self.CountGesture.set("Letra G")
-            return "G"
-        if letraH():
-            self.CountGesture.set("Letra H")
-            return "H"
-        if letraJ():
-            self.CountGesture.set("Letra J")
-            return "J"
-        if letraI():
-            self.CountGesture.set("Letra I")
-            return "I"
-        if letraK():
-            self.CountGesture.set("Letra K")
-            return "K"
-        if letraL():
-            self.CountGesture.set("Letra L")
-            return "L"
-        if letraM():
-            self.CountGesture.set("Letra M")
-            return "M"
-        if letraN_tilde():
-            self.CountGesture.set("Letra Ñ")
-            return "Ñ"
-        if letraN():
-            self.CountGesture.set("Letra N")
-            return "N"
-        if letraO():
-            self.CountGesture.set("Letra O")
-            return "O"
-        if letraP():
-            self.CountGesture.set("Letra P")
-            return "P"
-        if letraQ():
-            self.CountGesture.set("Letra Q")
-            return "Q"
-        if letraR():
-            self.CountGesture.set("Letra R")
-            return "R"
-        if letraS():
-            self.CountGesture.set("Letra S")
-            return "S"
-        if letraT():
-            self.CountGesture.set("Letra T")
-            return "T"
-        if letraU():
-            self.CountGesture.set("Letra U")
-            return "U"
-        if letraV():
-            self.CountGesture.set("Letra V")
-            return "V"
-        if letraW():
-            self.CountGesture.set("Letra W")
-            return "W"
-        if letraX():
-            self.CountGesture.set("Letra X")
-            return "X"
-        if letraY():
-            self.CountGesture.set("Letra Y")
-            return "Y"
-        if letraZ():
-            self.CountGesture.set("Letra Z")
-            return "Z"
-
-        self.CountGesture.set("")
+        # Orden: dinámicas primero, luego específicas, luego generales
+        if letraJ():       return "J"
+        if letraZ():       return "Z"
+        if letraN_tilde(): return "Ñ"
+        if letraF():       return "F"
+        if letraT():       return "T"
+        if letraS():       return "S"
+        if letraK():       return "K"
+        if letraR():       return "R"
+        if letraU():       return "U"
+        if letraV():       return "V"
+        if letraW():       return "W"
+        if letraX():       return "X"
+        if letraY():       return "Y"
+        if letraI():       return "I"
+        if letraL():       return "L"
+        if letraD():       return "D"
+        if letraG():       return "G"
+        if letraH():       return "H"
+        if letraP():       return "P"
+        if letraQ():       return "Q"
+        if letraM():       return "M"
+        if letraN():       return "N"
+        if letraA():       return "A"
+        if letraB():       return "B"
+        if letraO():       return "O"
+        if letraC():       return "C"
+        if letraE():       return "E"
         return None
 
     def get_current_gesture(self):
         return self.current_gesture
 
-    def release(self):
-        self.hands.close()
 
-sign_lang_conv = TraductorLenguajeSeñas()
-cap = cv2.VideoCapture(0)
+# ── Estado ──
+if "translator" not in st.session_state:
+    st.session_state.translator = TraductorLenguajeSeñas()
+if "word" not in st.session_state:
+    st.session_state.word = ""
+if "last_gesture" not in st.session_state:
+    st.session_state.last_gesture = None
+if "gesture_count" not in st.session_state:
+    st.session_state.gesture_count = 0
 
-# Video ocupa toda la pantalla
-label1 = Label(win, bg='#000000')
-label1.place(x=0, y=0, width=width, height=height)
+translator = st.session_state.translator
 
-# Etiquetas de gesto creadas una sola vez, flotando sobre el video
-crrgesture_lbl = Label(win, text='Gesto:', font=('Calibri', 36, 'bold'),
-                        bd=3, bg='#20262E', fg='#F5EAEA', relief=GROOVE)
-crrgesture_lbl.place(x=0, y=height - 80)
-status_lbl = Label(win, textvariable=sign_lang_conv.CountGesture,
-                   font=('Georgia', 36, 'bold'), bd=3, bg='#20262E',
-                   width=20, fg='#F5EAEA', relief=GROOVE)
-status_lbl.place(x=200, y=height - 80)
+# ── Layout ──
+col1, col2 = st.columns([3, 1])
 
-def select_img():
-    _, frame = cap.read()
-    frame = cv2.resize(frame, (width, height))
-    sign_lang_conv.detect_gesture(frame)
-    gesture = sign_lang_conv.get_current_gesture()
-    if gesture:
-        cv2.putText(frame, gesture, (30, 90), cv2.FONT_HERSHEY_SIMPLEX,
-                    3, (0, 255, 0), 5, cv2.LINE_AA)
-    with mp_hands.Hands(static_image_mode=False, max_num_hands=1,
-                        min_detection_confidence=0.5, min_tracking_confidence=0.5) as hands:
-        results = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        if results.multi_hand_landmarks:
-            for hl in results.multi_hand_landmarks:
-                mp_drawing.draw_landmarks(frame, hl, mp_hands.HAND_CONNECTIONS)
-    framergb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    img = Image.fromarray(framergb)
-    finalImage = ImageTk.PhotoImage(img)
-    label1.configure(image=finalImage)
-    label1.image = finalImage
-    win.after(1, select_img)
+with col1:
+    run = st.toggle("📷 Activar cámara")
+    frame_placeholder = st.empty()
 
-select_img()
-win.mainloop()
+with col2:
+    st.markdown("### Letra detectada")
+    gesture_placeholder = st.empty()
+    st.markdown("### Palabra formada")
+    word_placeholder = st.empty()
+    word_placeholder.markdown(f"## `{st.session_state.word}`")
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("⌫ Borrar letra"):
+            st.session_state.word = st.session_state.word[:-1]
+    with col_b:
+        if st.button("🗑️ Limpiar"):
+            st.session_state.word = ""
+
+# ── Loop cámara ──
+if run:
+    cap = cv2.VideoCapture(0)
+    CONFIRM_FRAMES = 15
+
+    while run:
+        ret, frame = cap.read()
+        if not ret:
+            st.error("No se puede acceder a la cámara.")
+            break
+
+        frame = translator.detect_gesture(frame)
+        gesture = translator.get_current_gesture()
+
+        if gesture == st.session_state.last_gesture:
+            st.session_state.gesture_count += 1
+        else:
+            st.session_state.gesture_count = 0
+            st.session_state.last_gesture = gesture
+
+        if st.session_state.gesture_count == CONFIRM_FRAMES and gesture:
+            st.session_state.word += gesture
+            st.session_state.gesture_count = 0
+
+        if gesture:
+            gesture_placeholder.markdown(f"# {gesture}")
+            cv2.putText(frame, gesture, (30, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 5)
+        else:
+            gesture_placeholder.markdown("# —")
+
+        word_placeholder.markdown(f"## `{st.session_state.word}`")
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame_placeholder.image(frame_rgb, channels="RGB", use_container_width=True)
+
+    cap.release()
